@@ -18,6 +18,9 @@ config/icon="res://icon.svg"
 [autoload]
 
 NetworkManager="*res://Scripts/NetworkManager.cs"
+AutoVisualizer="*res://Scripts/AutoVisualizer.cs"
+ForceCamera="*res://Scripts/ForceCamera.cs"
+ExtremeFallback="*res://Scripts/ExtremeFallback.cs"
 
 [dotnet]
 

@@ -27,9 +27,6 @@ public partial class NetworkedPlayer : CharacterBody3D
     [Export] public string InputFreefly { get; set; } = "freefly";
     [Export] public string InputFire { get; set; } = "fire";
 
-    // Networking properties
-    [Export] public NodePath SynchronizerPath { get; set; }
-    
     // Player stats
     [Export] public int Health { get; set; } = 100;
     [Export] public int Kills { get; set; } = 0;
@@ -45,23 +42,34 @@ public partial class NetworkedPlayer : CharacterBody3D
     private CollisionShape3D _collider;
     private Camera3D _camera;
     private MeshInstance3D _mesh;
-    private MultiplayerSynchronizer _synchronizer;
     
     // Debug label
     private Label3D _debugLabel;
+    private Label _hudLabel;
+    
+    // Cached multipayer ID values to avoid runtime errors
+    private int _myNetworkId = 0;
+    private bool _isLocalPlayer = false;
 
     public override void _Ready()
     {
-        // Print debug info
-        GD.Print($"NetworkedPlayer initializing. Name: {Name}");
+        PlayerId = (int)GetMultiplayerAuthority();
+        _myNetworkId = Multiplayer.GetUniqueId();
+        _isLocalPlayer = PlayerId == _myNetworkId;
         
-        // Add debug label
+        // Print debug info with additional details
+        GD.Print($"NetworkedPlayer initializing: Name={Name}, Authority={PlayerId}, " +
+                 $"MyNetworkID={_myNetworkId}, IsLocalPlayer={_isLocalPlayer}");
+        
+        // Create a HUD label for this player
+        CreateHudLabel(_isLocalPlayer);
+        
+        // Add debug label in 3D space
         _debugLabel = new Label3D();
-        _debugLabel.Text = $"Player {GetMultiplayerAuthority()}";
-        _debugLabel.Position = new Vector3(0, 2, 0);
-        //_debugLabel.BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled;
+        _debugLabel.Text = $"Player {PlayerId}\nAuth: {GetMultiplayerAuthority()}\nLocal: {_isLocalPlayer}";
+        _debugLabel.Position = new Vector3(0, 2.2f, 0);
         _debugLabel.FontSize = 24;
-        _debugLabel.Modulate = new Color(1, 1, 0); // Yellow
+        _debugLabel.Modulate = _isLocalPlayer ? new Color(0, 1, 0) : new Color(1, 1, 0); // Green for local, yellow for remote
         AddChild(_debugLabel);
         
         // Find required nodes
@@ -70,31 +78,50 @@ public partial class NetworkedPlayer : CharacterBody3D
         _camera = GetNodeOrNull<Camera3D>("Head/Camera3D");
         _mesh = GetNodeOrNull<MeshInstance3D>("Mesh");
         
-        if (!SynchronizerPath.IsEmpty)
-        {
-            _synchronizer = GetNodeOrNull<MultiplayerSynchronizer>(SynchronizerPath);
-        }
+        // IMPORTANT: We no longer rely on the external MultiplayerSynchronizer
+        // Configure replication directly in code instead
+        SetupNetworkReplication();
         
         // Debug output for node references
         GD.Print($"Player {Name} - Head: {(_head != null)}, Camera: {(_camera != null)}, Mesh: {(_mesh != null)}");
         
-        PlayerId = (int)GetMultiplayerAuthority();
-
         if (_head != null && _camera != null)
         {
-            GD.Print($"Player {Name} - Setting up camera, IsAuthority: {IsMultiplayerAuthority()}");
+            GD.Print($"Player {Name} - Setting up camera, IsLocalPlayer: {_isLocalPlayer}");
             
-            // Only make the local player's camera active
-            _camera.Current = IsMultiplayerAuthority();
+            // THE KEY FIX: Use isLocalPlayer check for camera activation
+            _camera.Current = _isLocalPlayer;
+            
+            // Add camera to a group so ForceCamera can find it
+            _camera.AddToGroup("Cameras");
             
             // Make the camera more visible in debug
             if (_camera.Current)
             {
-                GD.Print($"Player {Name} - Camera activated");
-                
-                // Set visible debug camerainfo
+                GD.Print($"Player {Name} - LOCAL PLAYER CAMERA ACTIVATED");
                 _debugLabel.Text += " (YOU)";
-                _debugLabel.Modulate = new Color(0, 1, 0); // Green for local player
+                
+                // Create eye-catching visual cue for camera activation
+                var sphere = new CsgSphere3D();
+                sphere.Name = "CameraIndicator";
+                sphere.Radius = 0.2f;
+                sphere.Position = new Vector3(0, 0, -1);
+                
+                var material = new StandardMaterial3D();
+                material.AlbedoColor = new Color(0, 1, 0); // Bright green
+                material.Emission = new Color(0, 1, 0);
+                material.EmissionEnergyMultiplier = 1.0f;
+                sphere.MaterialOverride = material;
+                
+                _camera.AddChild(sphere);
+                
+                // Add special label for camera debug
+                var label = new Label3D();
+                label.Text = "CAMERA ACTIVE!";
+                label.Position = new Vector3(0, 0.3f, -1);
+                label.Scale = new Vector3(0.2f, 0.2f, 0.2f);
+                label.Billboard = BaseMaterial3D.BillboardModeEnum.Enabled;
+                _camera.AddChild(label);
             }
         }
         else
@@ -102,13 +129,28 @@ public partial class NetworkedPlayer : CharacterBody3D
             GD.PrintErr($"Player {Name} - Missing head or camera node!");
         }
         
-        // Setup mesh for remote players
-        if (!IsMultiplayerAuthority() && _mesh != null)
+        // Setup mesh color for player identification
+        if (_mesh != null)
         {
             var material = new StandardMaterial3D();
-            material.AlbedoColor = new Color(1.0f, 0.0f, 0.0f); // Red for remote players
+            
+            // Use different colors for local vs remote players
+            if (_isLocalPlayer)
+            {
+                material.AlbedoColor = new Color(0.0f, 0.7f, 1.0f); // Blue for local player
+            }
+            else
+            {
+                material.AlbedoColor = new Color(1.0f, 0.0f, 0.0f); // Red for remote players
+            }
+            
             _mesh.MaterialOverride = material;
         }
+        
+        // Add CameraFixer script to help with camera issues
+        var cameraFixer = new CameraFixer();
+        AddChild(cameraFixer);
+        GD.Print($"Player {Name} - Added CameraFixer");
         
         CheckInputMappings();
         
@@ -119,18 +161,76 @@ public partial class NetworkedPlayer : CharacterBody3D
         }
         
         // Only enable input processing for the local player
-        SetPhysicsProcess(IsMultiplayerAuthority());
-        SetProcessInput(IsMultiplayerAuthority());
+        SetPhysicsProcess(_isLocalPlayer);
+        SetProcessInput(_isLocalPlayer);
         
         AddToGroup("Players");
         
         GD.Print($"Player {Name} initialized at position {GlobalPosition}");
     }
+    
+    // Configure the replication directly in code
+    private void SetupNetworkReplication()
+    {
+        var synchronizer = new MultiplayerSynchronizer();
+        synchronizer.Name = "NetworkSync";
+        
+        // Create configuration
+        var config = new SceneReplicationConfig();
+        
+        // Use absolute paths for properties
+        string fullPath = GetPath().ToString();
+        GD.Print($"Setting up sync for player at path: {fullPath}");
+        
+        // Add properties to sync with proper paths
+        config.AddProperty($"{fullPath}:position");
+        config.AddProperty($"{fullPath}:rotation");
+        config.AddProperty($"{fullPath}:velocity");
+        config.AddProperty($"{fullPath}:Health");
+        config.AddProperty($"{fullPath}:Kills");
+        config.AddProperty($"{fullPath}:Deaths");
+        
+        // Apply configuration to synchronizer
+        synchronizer.ReplicationConfig = config;
+        synchronizer.ReplicationInterval = 0.05f; // 20 updates per second
+        
+        // Add synchronizer to the player
+        AddChild(synchronizer);
+        
+        GD.Print($"Player {Name} - Network synchronization configured");
+    }
+    
+    private void CreateHudLabel(bool isLocalPlayer)
+    {
+        if (!isLocalPlayer) return;
+        
+        // Create HUD for local player only
+        _hudLabel = new Label();
+        _hudLabel.Position = new Vector2(20, 20);
+        _hudLabel.Text = "Local Player HUD";
+        
+        var canvas = new CanvasLayer();
+        canvas.Layer = 5; // Use layer between UI and debug
+        canvas.AddChild(_hudLabel);
+        
+        AddChild(canvas);
+    }
+    
+    private void UpdateHudLabel()
+    {
+        if (_hudLabel == null) return;
+        
+        _hudLabel.Text = $"Player Stats:\n" +
+                         $"Health: {Health}\n" +
+                         $"Kills: {Kills}\n" +
+                         $"Deaths: {Deaths}\n" +
+                         $"Position: {GlobalPosition.X:F1}, {GlobalPosition.Y:F1}, {GlobalPosition.Z:F1}";
+    }
 
     public override void _UnhandledInput(InputEvent @event)
     {
-        // Only process input if we're the owner of this player
-        if (!IsMultiplayerAuthority())
+        // Safety check - only process input for our own player
+        if (!_isLocalPlayer)
             return;
             
         // Mouse capturing
@@ -171,8 +271,8 @@ public partial class NetworkedPlayer : CharacterBody3D
 
     public override void _PhysicsProcess(double delta)
     {
-        // Only process physics if we're the owner of this player
-        if (!IsMultiplayerAuthority())
+        // Safety check - only process physics for our own player
+        if (!_isLocalPlayer)
             return;
             
         // If freeflying, handle freefly and nothing else
@@ -182,6 +282,7 @@ public partial class NetworkedPlayer : CharacterBody3D
             var motion = (_head.GlobalBasis * new Vector3(inputDir.X, 0, inputDir.Y)).Normalized();
             motion *= FreeflySpeed * (float)delta;
             MoveAndCollide(motion);
+            UpdateHudLabel();
             return;
         }
 
@@ -240,15 +341,20 @@ public partial class NetworkedPlayer : CharacterBody3D
         {
             _debugLabel.Text = $"Player {PlayerId} H:{Health} K:{Kills} D:{Deaths}";
         }
+        
+        // Update HUD
+        UpdateHudLabel();
     }
 
-    [Rpc(MultiplayerApi.RpcMode.Authority)]
+    [Rpc]
     public void TakeDamage(int amount, int attackerId)
     {
-        if (!IsMultiplayerAuthority())
+        // Only apply damage on our own player
+        if (!_isLocalPlayer)
             return;
             
         Health -= amount;
+        GD.Print($"Player {PlayerId} took {amount} damage from Player {attackerId}. Health: {Health}");
         
         if (Health <= 0)
         {
@@ -264,7 +370,7 @@ public partial class NetworkedPlayer : CharacterBody3D
         // Inform the killer they got a kill
         if (killerId != PlayerId)
         {
-            RpcId(killerId, nameof(AddKill));
+            Rpc(nameof(AddKill), killerId);
         }
         
         // Reset health and respawn
@@ -284,14 +390,20 @@ public partial class NetworkedPlayer : CharacterBody3D
             if (spawnPoint != null)
             {
                 GlobalPosition = spawnPoint.GlobalPosition + new Vector3(0, 1, 0);
+                GD.Print($"Player {PlayerId} respawned at {GlobalPosition}");
             }
         }
     }
     
-    [Rpc(MultiplayerApi.RpcMode.Authority)]
-    private void AddKill()
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer)]
+    private void AddKill(int killerId)
     {
-        Kills++;
+        // Find the player with this ID and update their kills
+        if (PlayerId == killerId)
+        {
+            Kills++;
+            GD.Print($"Player {PlayerId} got a kill! Total: {Kills}");
+        }
     }
     
     private void Fire()
@@ -319,8 +431,8 @@ public partial class NetworkedPlayer : CharacterBody3D
                 // Don't hit yourself
                 if (hitPlayer.PlayerId != PlayerId)
                 {
-                    // Deal damage to the hit player
-                    hitPlayer.RpcId(hitPlayer.GetMultiplayerAuthority(), nameof(TakeDamage), 25, PlayerId);
+                    // Use simplified RPC approach
+                    hitPlayer.Rpc(nameof(TakeDamage), 25, PlayerId);
                     GD.Print($"Hit player {hitPlayer.PlayerId}");
                 }
             }
@@ -354,6 +466,7 @@ public partial class NetworkedPlayer : CharacterBody3D
         }
         _isFreeflyEnabled = true;
         Velocity = Vector3.Zero;
+        GD.Print($"Player {PlayerId} enabled freefly mode");
     }
 
     private void DisableFreefly()
@@ -363,6 +476,7 @@ public partial class NetworkedPlayer : CharacterBody3D
             _collider.Disabled = false;
         }
         _isFreeflyEnabled = false;
+        GD.Print($"Player {PlayerId} disabled freefly mode");
     }
 
     private void CaptureMouseCursor()
