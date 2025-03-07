@@ -22,24 +22,47 @@ public partial class GameManager : Node
     
     public override void _Ready()
     {
-        _networkManager = GetNode<NetworkManager>(NetworkManagerPath);
+        if (NetworkManagerPath.IsEmpty)
+        {
+            // Try to find the autoloaded NetworkManager
+            _networkManager = GetNode<NetworkManager>("/root/NetworkManager");
+        }
+        else
+        {
+            _networkManager = GetNode<NetworkManager>(NetworkManagerPath);
+        }
         
         if (_networkManager == null)
         {
-            GD.PrintErr("NetworkManager not found at path: " + NetworkManagerPath);
+            GD.PrintErr("NetworkManager not found! Game will not function properly.");
             return;
         }
+        
+        GD.Print("GameManager successfully connected to NetworkManager");
         
         if (!ScoreboardUIPath.IsEmpty)
         {
             _scoreboardUI = GetNode<Control>(ScoreboardUIPath);
             _timerLabel = _scoreboardUI.GetNode<Label>("%TimerLabel");
+            _scoreboardUI.Visible = false;
+            
+            // Set up the scoreboard title
+            var titleLabel = _scoreboardUI.GetNode<Label>("%Title");
+            if (titleLabel != null)
+            {
+                titleLabel.Text = "SCOREBOARD";
+            }
         }
+        
+        // Connect signals from NetworkManager
+        _networkManager.PeerConnected += OnPlayerConnected;
+        _networkManager.PeerDisconnected += OnPlayerDisconnected;
         
         // Only the server starts the match
         if (_networkManager.IsHost())
         {
-            StartMatch();
+            // Use CallDeferred to ensure the scene is fully loaded
+            CallDeferred(nameof(StartMatch));
         }
     }
     
@@ -55,14 +78,18 @@ public partial class GameManager : Node
                 EndMatch();
             }
             
-            // Update the timer displays on all clients
-            Rpc(nameof(UpdateMatchTimer), _matchTimeRemaining);
+            // Update the timer displays on all clients (every second to reduce network traffic)
+            if (Mathf.FloorToInt((float)_matchTimeRemaining) != Mathf.FloorToInt((float)(_matchTimeRemaining + delta)))
+            {
+                Rpc(nameof(UpdateMatchTimer), _matchTimeRemaining);
+            }
         }
         
         // Show/hide scoreboard on Tab key
         if (Input.IsActionJustPressed("ui_focus_next") && _scoreboardUI != null) // Tab key
         {
             _scoreboardUI.Visible = true;
+            UpdateScoreboard();
         }
         else if (Input.IsActionJustReleased("ui_focus_next") && _scoreboardUI != null)
         {
@@ -78,8 +105,13 @@ public partial class GameManager : Node
         GD.Print("Match started!");
         EmitSignal(SignalName.MatchStarted);
         
-        // Spawn player for server
-        _networkManager.SpawnPlayer(1);
+        // Ensure server spawns its own player immediately
+        if (_networkManager.IsHost())
+        {
+            GD.Print("Server is spawning its own player (ID 1)...");
+            // Force spawn of server player
+            _networkManager.SpawnPlayer(1);
+        }
     }
     
     private void EndMatch()
@@ -124,7 +156,43 @@ public partial class GameManager : Node
         {
             var minutes = (int)(timeRemaining / 60);
             var seconds = (int)(timeRemaining % 60);
-            _timerLabel.Text = $"{minutes:00}:{seconds:00}";
+            _timerLabel.Text = $"Time: {minutes:00}:{seconds:00}";
+        }
+    }
+    
+    private void UpdateScoreboard()
+    {
+        if (_scoreboardUI == null) return;
+        
+        var playersList = _scoreboardUI.GetNode<VBoxContainer>("%PlayersList");
+        if (playersList == null) return;
+        
+        // Clear existing entries
+        foreach (var child in playersList.GetChildren())
+        {
+            child.QueueFree();
+        }
+        
+        // Add header
+        var header = new HBoxContainer();
+        header.AddChild(new Label { Text = "Player", CustomMinimumSize = new Vector2(100, 0) });
+        header.AddChild(new Label { Text = "Kills", CustomMinimumSize = new Vector2(50, 0) });
+        header.AddChild(new Label { Text = "Deaths", CustomMinimumSize = new Vector2(50, 0) });
+        playersList.AddChild(header);
+        
+        // Get all players and their stats
+        var players = _networkManager.GetPlayers();
+        GD.Print($"Updating scoreboard with {players.Count} players");
+        foreach (var player in players)
+        {
+            if (player.Value is NetworkedPlayer networkPlayer)
+            {
+                var playerRow = new HBoxContainer();
+                playerRow.AddChild(new Label { Text = $"Player {networkPlayer.PlayerId}", CustomMinimumSize = new Vector2(100, 0) });
+                playerRow.AddChild(new Label { Text = networkPlayer.Kills.ToString(), CustomMinimumSize = new Vector2(50, 0) });
+                playerRow.AddChild(new Label { Text = networkPlayer.Deaths.ToString(), CustomMinimumSize = new Vector2(50, 0) });
+                playersList.AddChild(playerRow);
+            }
         }
     }
     
@@ -151,5 +219,22 @@ public partial class GameManager : Node
     private void ReturnToMainMenu()
     {
         _networkManager.Disconnect();
+    }
+    
+    private void OnPlayerConnected(long id)
+    {
+        GD.Print($"GameManager: Player {id} connected");
+        
+        // If match is active, sync the match state with the new player
+        if (_matchActive && _networkManager.IsHost())
+        {
+            RpcId((int)id, nameof(UpdateMatchTimer), _matchTimeRemaining);
+        }
+    }
+    
+    private void OnPlayerDisconnected(long id)
+    {
+        GD.Print($"GameManager: Player {id} disconnected");
+        UpdateScoreboard();
     }
 }

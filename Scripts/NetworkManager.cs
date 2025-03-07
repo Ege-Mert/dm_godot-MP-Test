@@ -22,14 +22,45 @@ public partial class NetworkManager : Node
     [Signal]
     public delegate void NetworkErrorEventHandler(string error);
     
+    [Signal]
+    public delegate void PeerConnectedEventHandler(long id);
+    
+    [Signal]
+    public delegate void PeerDisconnectedEventHandler(long id);
+    
     public override void _Ready()
     {
         Multiplayer.PeerConnected += OnPeerConnected;
         Multiplayer.PeerDisconnected += OnPeerDisconnected;
         
+        // Load player scene if not already set
         if (PlayerScene == null)
         {
-            GD.PrintErr("PlayerScene not set in NetworkManager");
+            string playerScenePath = "res://scenes/NetworkedPlayer.tscn";
+            PlayerScene = ResourceLoader.Load<PackedScene>(playerScenePath);
+            if (PlayerScene == null)
+            {
+                GD.PrintErr($"Could not load NetworkedPlayer scene from {playerScenePath}");
+            }
+            else
+            {
+                GD.Print($"Successfully loaded PlayerScene from {playerScenePath}");
+            }
+        }
+        else
+        {
+            GD.Print("PlayerScene already set in NetworkManager");
+        }
+        
+        // Validate game scene path
+        if (!ResourceLoader.Exists(GameScenePath))
+        {
+            string defaultPath = "res://scenes/GameScene.tscn";
+            if (ResourceLoader.Exists(defaultPath))
+            {
+                GD.PrintErr($"Game scene not found at {GameScenePath}, using default path {defaultPath}");
+                GameScenePath = defaultPath;
+            }
         }
     }
     
@@ -99,8 +130,12 @@ public partial class NetworkManager : Node
         // Server spawns player for new connections
         if (_isServer)
         {
+            GD.Print($"Server is spawning player for peer: {id}");
             SpawnPlayer(id);
         }
+        
+        // Emit signal for other systems to react
+        EmitSignal(SignalName.PeerConnected, id);
     }
     
     private void OnPeerDisconnected(long id)
@@ -116,14 +151,26 @@ public partial class NetworkManager : Node
             
             _players.Remove(id);
         }
+        
+        // Emit signal for other systems to react
+        EmitSignal(SignalName.PeerDisconnected, id);
     }
     
     public void SpawnPlayer(long id)
     {
+        // Try to load the player scene if not already set
         if (PlayerScene == null)
         {
-            GD.PrintErr("Player scene not set in NetworkManager");
-            return;
+            // Try to load the player scene again as a last resort
+            string playerScenePath = "res://scenes/NetworkedPlayer.tscn";
+            PlayerScene = ResourceLoader.Load<PackedScene>(playerScenePath);
+            
+            if (PlayerScene == null)
+            {
+                GD.PrintErr("Player scene not set in NetworkManager and could not be loaded");
+                EmitSignal(SignalName.NetworkError, "Could not spawn player: player scene missing");
+                return;
+            }
         }
         
         // Don't spawn if player already exists
@@ -133,25 +180,54 @@ public partial class NetworkManager : Node
             return;
         }
         
-        var player = PlayerScene.Instantiate();
-        player.Name = id.ToString();
-        
-        // Set network authority
-        player.SetMultiplayerAuthority((int)id);
-        
-        // Find a spawn point
-        var spawnPoints = GetTree().GetNodesInGroup("SpawnPoints");
-        if (spawnPoints.Count > 0)
+        try
         {
-            var spawnIndex = GD.Randi() % (uint)spawnPoints.Count;
-            (player as Node3D).GlobalPosition = (spawnPoints[(int)spawnIndex] as Node3D).GlobalPosition;
+            // Instantiate the player
+            var player = PlayerScene.Instantiate();
+            if (player == null)
+            {
+                GD.PrintErr($"Failed to instantiate player scene for id {id}");
+                return;
+            }
+            
+            player.Name = id.ToString();
+            
+            // Set network authority
+            player.SetMultiplayerAuthority((int)id);
+            
+            // Find a spawn point - need to have at least one in the scene!
+            var spawnPoints = GetTree().GetNodesInGroup("SpawnPoints");
+            if (spawnPoints.Count > 0)
+            {
+                var spawnIndex = GD.Randi() % (uint)spawnPoints.Count;
+                (player as Node3D).GlobalPosition = (spawnPoints[(int)spawnIndex] as Node3D).GlobalPosition;
+                GD.Print($"Player {id} spawned at position {(player as Node3D).GlobalPosition}");
+            }
+            else
+            {
+                // No spawn points, use a default position
+                GD.PrintErr("No spawn points found, using default position");
+                (player as Node3D).GlobalPosition = new Vector3(0, 2, 0); // Slightly above the ground
+            }
+            
+            // Get the current scene and add the player using call_deferred to avoid errors
+            var currentScene = GetTree().CurrentScene;
+            if (currentScene == null)
+            {
+                GD.PrintErr("Cannot spawn player: current scene is null");
+                return;
+            }
+            
+            // Use CallDeferred to add the player to the scene
+            currentScene.CallDeferred("add_child", player);
+            _players[id] = player;
+            
+            GD.Print($"Successfully spawned player for peer: {id}");
         }
-        
-        // Add to the scene
-        GetTree().CurrentScene.AddChild(player);
-        _players[id] = player;
-        
-        GD.Print($"Spawned player for peer: {id}");
+        catch (Exception e)
+        {
+            GD.PrintErr($"Exception while spawning player: {e.Message}");
+        }
     }
     
     public bool IsHost()
