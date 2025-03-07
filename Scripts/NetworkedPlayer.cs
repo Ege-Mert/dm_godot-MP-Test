@@ -81,6 +81,7 @@ public partial class NetworkedPlayer : CharacterBody3D
         // Only enable input processing for the local player
         SetPhysicsProcess(isLocal);
         SetProcessInput(isLocal);
+        SetProcessUnhandledInput(isLocal);
         
         // Setup camera and auto-capture mouse for local player
         if (_camera != null)
@@ -88,15 +89,14 @@ public partial class NetworkedPlayer : CharacterBody3D
             if (isLocal)
             {
                 GD.Print($"Player {PlayerId}: Activating camera as local player");
-                _camera.Current = true;
-                // Force camera to be enabled to improve visibility
-                _camera.Visible = true;
-                _camera.ClearCurrent();
-                _camera.MakeCurrent();
+                
+                // Force make current with delay to ensure it becomes the active camera
+                CallDeferred(nameof(SetupLocalCamera));
                 
                 // Automatically capture mouse on start for the local player
                 Input.MouseMode = Input.MouseModeEnum.Captured;
                 _mouseIsCaptured = true;
+                GD.Print($"Mouse captured during initialization");
             }
             else
             {
@@ -117,7 +117,38 @@ public partial class NetworkedPlayer : CharacterBody3D
             CallDeferred(nameof(ConnectToHUD));
         }
     }
+    
+    private void SetupLocalCamera()
+    {
+        if (_camera != null)
+        {
+            GD.Print("Setting up local camera with force MakeCurrent");
+            _camera.Current = true;
+            _camera.ClearCurrent();
+            _camera.MakeCurrent();
+            _camera.Visible = true;
+            GD.Print("Camera setup complete");
+        }
+    }
 
+    public override void _Input(InputEvent @event)
+    {
+        // Only process input if we're the owner of this player
+        if (!IsMultiplayerAuthority())
+            return;
+            
+        // Input handling in _Input gets priority over _UnhandledInput
+        if (@event is InputEventMouseMotion mouseMotion)
+        {
+            // Process mouse movement here with high priority
+            GD.Print($"Mouse motion detected: {mouseMotion.Relative}");
+            RotateLook(mouseMotion.Relative);
+            
+            // Mark as handled to avoid double processing
+            GetViewport().SetInputAsHandled();
+        }
+    }
+    
     public override void _UnhandledInput(InputEvent @event)
     {
         // Only process input if we're the owner of this player
@@ -134,14 +165,7 @@ public partial class NetworkedPlayer : CharacterBody3D
             CaptureMouseCursor();
         }
 
-        // Look around - this is critical for the game
-        if (@event is InputEventMouseMotion mouseMotion)
-        {
-            // Always rotate look even if mouse isn't explicitly captured
-            // This helps ensure mouse look works in all cases
-            RotateLook(mouseMotion.Relative);
-        }
-
+        // Handle non-mouse-motion events here
         // Toggle freefly mode
         if (CanFreefly && Input.IsActionJustPressed(InputFreefly))
         {
@@ -318,20 +342,32 @@ public partial class NetworkedPlayer : CharacterBody3D
         if (rotInput.LengthSquared() < 0.01f)
             return;
             
-        _lookRotation.X -= rotInput.Y * LookSpeed;
+        // Double check we have multiplayer authority before processing mouse input
+        if (!IsMultiplayerAuthority())
+            return;
+            
+        // Print every mouse input for debugging
+        GD.Print($"Processing mouse movement: {rotInput}");
+            
+        // Apply mouse sensitivity
+        float sensitivity = 0.005f; // Increased from default to make it more responsive
+        _lookRotation.X -= rotInput.Y * sensitivity;
         _lookRotation.X = Mathf.Clamp(_lookRotation.X, Mathf.DegToRad(-85), Mathf.DegToRad(85));
-        _lookRotation.Y -= rotInput.X * LookSpeed;
+        _lookRotation.Y -= rotInput.X * sensitivity;
         
-        // Make sure we reset the basis before applying rotation to avoid accumulation errors
-        Transform = new Transform3D(Basis.Identity, Transform.Origin);
-        RotateY(_lookRotation.Y);
-        _head.Transform = new Transform3D(Basis.Identity, _head.Transform.Origin);
-        _head.RotateX(_lookRotation.X);
+        // Apply rotation directly to the nodes
+        Basis bodyBasis = Basis.Identity;
+        bodyBasis = bodyBasis.Rotated(Vector3.Up, _lookRotation.Y);
+        Transform = new Transform3D(bodyBasis, Transform.Origin);
         
-        // Debug output to confirm rotation is happening
-        if (rotInput.Length() > 5.0f) // Only log significant movements to avoid spam
+        Basis headBasis = Basis.Identity;
+        headBasis = headBasis.Rotated(Vector3.Right, _lookRotation.X);
+        _head.Transform = new Transform3D(headBasis, _head.Transform.Origin);
+        
+        // Debug output for every significant movement
+        if (rotInput.Length() > 1.0f)
         {
-            GD.Print($"Player {PlayerId}: Mouse rotation input: {rotInput}, Head rotation: {_head.Rotation}");
+            GD.Print($"Player {PlayerId}: Mouse rotation applied - body: {Rotation}, head: {_head.Rotation}");
         }
     }
 
@@ -401,21 +437,58 @@ public partial class NetworkedPlayer : CharacterBody3D
         }
     }
     
-    private void ConnectToHUD()
+    private async void ConnectToHUD()
     {
         try
         {
-            // Try different possible paths to find the GameHUD
-            var gameHUD = GetTree().Root.GetNode<Control>("Node3D/CanvasLayer/GameHUD");
+            // Give scene more time to initialize before connecting to HUD
+            await ToSignal(GetTree().CreateTimer(0.2f), "timeout");
+            
+            GD.Print("Attempting to connect to HUD...");
+            
+            // Try all possible paths that might be used
+            Control gameHUD = null;
+            string[] possiblePaths = {
+                "GameScene/CanvasLayer/GameHUD",
+                "Node3D/CanvasLayer/GameHUD",
+                "CanvasLayer/GameHUD",  // Maybe relative path
+                "/root/GameScene/CanvasLayer/GameHUD"  // Absolute path
+            };
+            
+            // Try to find HUD in any of these paths
+            foreach (var path in possiblePaths)
+            {
+                try {
+                    gameHUD = GetTree().Root.GetNode<Control>(path);
+                    if (gameHUD != null) {
+                        GD.Print($"Found HUD at path: {path}");
+                        break;
+                    }
+                } catch {
+                    // Silently fail and try next path
+                }
+            }
+            
+            // If not found, try getting from current scene
             if (gameHUD == null)
             {
-                // Try alternative path naming
-                gameHUD = GetTree().Root.GetNode<Control>("GameScene/CanvasLayer/GameHUD");
+                var currentScene = GetTree().CurrentScene;
+                if (currentScene != null)
+                {
+                    try {
+                        gameHUD = currentScene.GetNode<Control>("CanvasLayer/GameHUD");
+                        if (gameHUD != null) {
+                            GD.Print("Found HUD in current scene");
+                        }
+                    } catch {
+                        // Final attempt failed
+                    }
+                }
             }
             
             if (gameHUD != null)
             {
-                UpdateHUD();
+                UpdateHUD(gameHUD);
                 GD.Print($"Player {PlayerId}: Connected to HUD");
             }
             else
@@ -429,23 +502,41 @@ public partial class NetworkedPlayer : CharacterBody3D
         }
     }
     
-    private void UpdateHUD()
+    private void UpdateHUD(Control gameHUD = null)
     {
         try
         {
-            // Try different possible paths to find the GameHUD
-            var gameHUD = GetTree().Root.GetNode<Control>("Node3D/CanvasLayer/GameHUD");
+            // If no gameHUD passed, try to find it again
             if (gameHUD == null)
             {
-                // Try alternative path naming
-                gameHUD = GetTree().Root.GetNode<Control>("GameScene/CanvasLayer/GameHUD");
+                // Try different possible paths
+                string[] possiblePaths = {
+                    "GameScene/CanvasLayer/GameHUD",
+                    "Node3D/CanvasLayer/GameHUD",
+                    "/root/GameScene/CanvasLayer/GameHUD"
+                };
+                
+                foreach (var path in possiblePaths)
+                {
+                    try {
+                        gameHUD = GetTree().Root.GetNode<Control>(path);
+                        if (gameHUD != null) break;
+                    } catch {
+                        // Try next path
+                    }
+                }
             }
             
-            if (gameHUD == null) return;
+            if (gameHUD == null) {
+                GD.Print("Could not find GameHUD to update");
+                return;
+            }
             
             var healthBar = gameHUD.GetNode<ProgressBar>("%HealthBar");
             var healthLabel = gameHUD.GetNode<Label>("%HealthLabel");
             var killsLabel = gameHUD.GetNode<Label>("%KillsLabel");
+            
+            GD.Print($"Updating HUD - Health: {Health}, Kills: {Kills}, Deaths: {Deaths}");
             
             if (healthBar != null)
             {

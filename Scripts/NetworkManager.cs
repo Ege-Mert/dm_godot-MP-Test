@@ -94,7 +94,17 @@ public partial class NetworkManager : Node
         if (_isServer)
         {
             GD.Print("Spawning host player (ID 1)...");
-            SpawnPlayer(1);
+            // Add a small delay before spawning to ensure scene is ready
+            var timer = new Timer();
+            timer.WaitTime = 0.5f; // Half-second delay
+            timer.OneShot = true;
+            AddChild(timer);
+            timer.Timeout += () => {
+                GD.Print("Timer expired, now spawning host player");
+                SpawnPlayer(1);
+                timer.QueueFree();
+            };
+            timer.Start();
         }
     }
     
@@ -195,6 +205,26 @@ public partial class NetworkManager : Node
         
         try
         {
+            // Get current scene first to verify it's ready
+            var currentScene = GetTree().CurrentScene;
+            if (currentScene == null)
+            {
+                GD.PrintErr("Cannot spawn player: current scene is null, will retry");
+                // Retry with delay
+                var timer = new Timer();
+                timer.WaitTime = 0.5f;
+                timer.OneShot = true;
+                AddChild(timer);
+                timer.Timeout += () => {
+                    SpawnPlayer(id);
+                    timer.QueueFree();
+                };
+                timer.Start();
+                return;
+            }
+            
+            GD.Print($"Current scene is: {currentScene.Name}");
+            
             // Instantiate the player
             var player = PlayerScene.Instantiate();
             if (player == null)
@@ -208,32 +238,38 @@ public partial class NetworkManager : Node
             // Set network authority
             player.SetMultiplayerAuthority((int)id);
             
+            // First add to scene, then set position
+            currentScene.AddChild(player);
+            _players[id] = player;
+            
             // Find a spawn point - need to have at least one in the scene!
             var spawnPoints = GetTree().GetNodesInGroup("SpawnPoints");
+            GD.Print($"Found {spawnPoints.Count} spawn points");
             if (spawnPoints.Count > 0)
             {
-                var spawnIndex = GD.Randi() % (uint)spawnPoints.Count;
-                (player as Node3D).GlobalPosition = (spawnPoints[(int)spawnIndex] as Node3D).GlobalPosition;
-                GD.Print($"Player {id} spawned at position {(player as Node3D).GlobalPosition}");
+                var spawnIndex = (int)(GD.Randi() % (uint)spawnPoints.Count);
+                var spawnPoint = spawnPoints[spawnIndex] as Node3D;
+                var playerNode = player as Node3D;
+                
+                // Make sure player is inside tree before setting global position
+                if (playerNode.IsInsideTree() && spawnPoint.IsInsideTree())
+                {
+                    playerNode.GlobalPosition = spawnPoint.GlobalPosition;
+                    GD.Print($"Player {id} spawned at position {playerNode.GlobalPosition}");
+                }
+                else
+                {
+                    // Fallback: set local position
+                    playerNode.Position = new Vector3(0, 2, 0);
+                    GD.Print($"Player {id} spawned at local position");
+                }
             }
             else
             {
                 // No spawn points, use a default position
                 GD.PrintErr("No spawn points found, using default position");
-                (player as Node3D).GlobalPosition = new Vector3(0, 2, 0); // Slightly above the ground
+                (player as Node3D).Position = new Vector3(0, 2, 0); // Slightly above the ground
             }
-            
-            // Get the current scene and add the player using call_deferred to avoid errors
-            var currentScene = GetTree().CurrentScene;
-            if (currentScene == null)
-            {
-                GD.PrintErr("Cannot spawn player: current scene is null");
-                return;
-            }
-            
-            // Use CallDeferred to add the player to the scene
-            currentScene.CallDeferred("add_child", player);
-            _players[id] = player;
             
             GD.Print($"Successfully spawned player for peer: {id}");
         }
