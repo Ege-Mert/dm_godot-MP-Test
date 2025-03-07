@@ -46,42 +46,85 @@ public partial class NetworkedPlayer : CharacterBody3D
     private Camera3D _camera;
     private MeshInstance3D _mesh;
     private MultiplayerSynchronizer _synchronizer;
+    
+    // Debug label
+    private Label3D _debugLabel;
 
     public override void _Ready()
     {
-        _head = GetNode<Node3D>("Head");
-        _collider = GetNode<CollisionShape3D>("Collider");
-        _camera = GetNode<Camera3D>("Head/Camera3D");
-        _mesh = GetNode<MeshInstance3D>("Mesh");
+        // Print debug info
+        GD.Print($"NetworkedPlayer initializing. Name: {Name}");
+        
+        // Add debug label
+        _debugLabel = new Label3D();
+        _debugLabel.Text = $"Player {GetMultiplayerAuthority()}";
+        _debugLabel.Position = new Vector3(0, 2, 0);
+        //_debugLabel.BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled;
+        _debugLabel.FontSize = 24;
+        _debugLabel.Modulate = new Color(1, 1, 0); // Yellow
+        AddChild(_debugLabel);
+        
+        // Find required nodes
+        _head = GetNodeOrNull<Node3D>("Head");
+        _collider = GetNodeOrNull<CollisionShape3D>("Collider");
+        _camera = GetNodeOrNull<Camera3D>("Head/Camera3D");
+        _mesh = GetNodeOrNull<MeshInstance3D>("Mesh");
         
         if (!SynchronizerPath.IsEmpty)
         {
-            _synchronizer = GetNode<MultiplayerSynchronizer>(SynchronizerPath);
+            _synchronizer = GetNodeOrNull<MultiplayerSynchronizer>(SynchronizerPath);
         }
+        
+        // Debug output for node references
+        GD.Print($"Player {Name} - Head: {(_head != null)}, Camera: {(_camera != null)}, Mesh: {(_mesh != null)}");
         
         PlayerId = (int)GetMultiplayerAuthority();
 
-        CheckInputMappings();
-        _lookRotation.Y = Rotation.Y;
-        _lookRotation.X = _head.Rotation.X;
-        
-        // Only enable input processing for the local player
-        SetPhysicsProcess(IsMultiplayerAuthority());
-        SetProcessInput(IsMultiplayerAuthority());
-        
-        // Setup camera
-        if (_camera != null)
+        if (_head != null && _camera != null)
         {
+            GD.Print($"Player {Name} - Setting up camera, IsAuthority: {IsMultiplayerAuthority()}");
+            
+            // Only make the local player's camera active
             _camera.Current = IsMultiplayerAuthority();
+            
+            // Make the camera more visible in debug
+            if (_camera.Current)
+            {
+                GD.Print($"Player {Name} - Camera activated");
+                
+                // Set visible debug camerainfo
+                _debugLabel.Text += " (YOU)";
+                _debugLabel.Modulate = new Color(0, 1, 0); // Green for local player
+            }
+        }
+        else
+        {
+            GD.PrintErr($"Player {Name} - Missing head or camera node!");
         }
         
-        // Set a different color for remote players
+        // Setup mesh for remote players
         if (!IsMultiplayerAuthority() && _mesh != null)
         {
             var material = new StandardMaterial3D();
             material.AlbedoColor = new Color(1.0f, 0.0f, 0.0f); // Red for remote players
             _mesh.MaterialOverride = material;
         }
+        
+        CheckInputMappings();
+        
+        if (_head != null)
+        {
+            _lookRotation.Y = Rotation.Y;
+            _lookRotation.X = _head.Rotation.X;
+        }
+        
+        // Only enable input processing for the local player
+        SetPhysicsProcess(IsMultiplayerAuthority());
+        SetProcessInput(IsMultiplayerAuthority());
+        
+        AddToGroup("Players");
+        
+        GD.Print($"Player {Name} initialized at position {GlobalPosition}");
     }
 
     public override void _UnhandledInput(InputEvent @event)
@@ -191,6 +234,12 @@ public partial class NetworkedPlayer : CharacterBody3D
 
         // Use velocity to actually move
         MoveAndSlide();
+        
+        // Update debug label position to stay above player
+        if (_debugLabel != null)
+        {
+            _debugLabel.Text = $"Player {PlayerId} H:{Health} K:{Kills} D:{Deaths}";
+        }
     }
 
     [Rpc(MultiplayerApi.RpcMode.Authority)]
@@ -223,10 +272,19 @@ public partial class NetworkedPlayer : CharacterBody3D
         
         // Find a spawn point
         var spawnPoints = GetTree().GetNodesInGroup("SpawnPoints");
+        if (spawnPoints.Count == 0)
+        {
+            spawnPoints = GetTree().GetNodesInGroup("Spawnpoints");
+        }
+        
         if (spawnPoints.Count > 0)
         {
             var spawnIndex = new Random().Next(0, spawnPoints.Count);
-            GlobalPosition = (spawnPoints[spawnIndex] as Node3D).GlobalPosition;
+            var spawnPoint = spawnPoints[spawnIndex] as Node3D;
+            if (spawnPoint != null)
+            {
+                GlobalPosition = spawnPoint.GlobalPosition + new Vector3(0, 1, 0);
+            }
         }
     }
     
@@ -238,6 +296,12 @@ public partial class NetworkedPlayer : CharacterBody3D
     
     private void Fire()
     {
+        if (_camera == null)
+        {
+            GD.PrintErr($"Player {Name} - Cannot fire, camera is null");
+            return;
+        }
+            
         // Create a raycast from the camera
         var rayLength = 1000.0f;
         var rayFrom = _camera.GlobalPosition;
@@ -271,6 +335,8 @@ public partial class NetworkedPlayer : CharacterBody3D
 
     private void RotateLook(Vector2 rotInput)
     {
+        if (_head == null) return;
+        
         _lookRotation.X -= rotInput.Y * LookSpeed;
         _lookRotation.X = Mathf.Clamp(_lookRotation.X, Mathf.DegToRad(-85), Mathf.DegToRad(85));
         _lookRotation.Y -= rotInput.X * LookSpeed;
@@ -282,14 +348,20 @@ public partial class NetworkedPlayer : CharacterBody3D
 
     private void EnableFreefly()
     {
-        _collider.Disabled = true;
+        if (_collider != null)
+        {
+            _collider.Disabled = true;
+        }
         _isFreeflyEnabled = true;
         Velocity = Vector3.Zero;
     }
 
     private void DisableFreefly()
     {
-        _collider.Disabled = false;
+        if (_collider != null)
+        {
+            _collider.Disabled = false;
+        }
         _isFreeflyEnabled = false;
     }
 

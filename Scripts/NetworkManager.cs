@@ -7,11 +7,12 @@ public partial class NetworkManager : Node
     [Export] public string ServerIP { get; set; } = "127.0.0.1";
     [Export] public int ServerPort { get; set; } = 28960;
     [Export] public PackedScene PlayerScene { get; set; }
-    [Export] public string GameScenePath { get; set; } = "res://Scenes/GameScene.tscn";
+    [Export] public string GameScenePath { get; set; } = "res://scenes/GameScene.tscn";
     
     private ENetMultiplayerPeer _peer;
     private Dictionary<long, Node> _players = new Dictionary<long, Node>();
     private bool _isServer = false;
+    private bool _sceneLoaded = false;
     
     [Signal]
     public delegate void ServerStartedEventHandler();
@@ -22,6 +23,9 @@ public partial class NetworkManager : Node
     [Signal]
     public delegate void NetworkErrorEventHandler(string error);
     
+    [Signal]
+    public delegate void GameSceneReadyEventHandler();
+    
     public override void _Ready()
     {
         Multiplayer.PeerConnected += OnPeerConnected;
@@ -29,8 +33,61 @@ public partial class NetworkManager : Node
         
         if (PlayerScene == null)
         {
-            GD.PrintErr("PlayerScene not set in NetworkManager");
+            // Try to load the player scene if not set
+            PlayerScene = ResourceLoader.Load<PackedScene>("res://scenes/NetworkedPlayer.tscn");
+            if (PlayerScene == null)
+            {
+                GD.PrintErr("PlayerScene not set in NetworkManager and could not be loaded automatically");
+            }
+            else
+            {
+                GD.Print("Player scene loaded automatically");
+            }
         }
+        
+        // Connect to scene tree changes to detect when game scene is fully loaded
+        GetTree().NodeAdded += OnNodeAdded;
+    }
+    
+    private void OnNodeAdded(Node node)
+    {
+        // When we detect our game scene is loaded, we can spawn players
+        if (!_sceneLoaded && node.Name == GetGameSceneName())
+        {
+            GD.Print("Game scene detected as loaded!");
+            _sceneLoaded = true;
+            
+            // Wait a moment for scene to fully initialize before spawning players
+            var timer = new Timer();
+            timer.WaitTime = 0.5f;
+            timer.OneShot = true;
+            timer.Timeout += () => {
+                GD.Print("Scene initialization timer complete, ready to spawn players");
+                EmitSignal(SignalName.GameSceneReady);
+                
+                // If we're the server, spawn our own player
+                if (_isServer)
+                {
+                    SpawnAllPlayers();
+                }
+                
+                timer.QueueFree();
+            };
+            AddChild(timer);
+            timer.Start();
+        }
+    }
+    
+    private string GetGameSceneName()
+    {
+        // Extract scene name from path
+        var parts = GameScenePath.Split('/');
+        if (parts.Length > 0)
+        {
+            var lastPart = parts[parts.Length - 1];
+            return lastPart.Replace(".tscn", "");
+        }
+        return "GameScene";
     }
     
     public void StartServer()
@@ -87,17 +144,18 @@ public partial class NetworkManager : Node
         
         _players.Clear();
         _isServer = false;
+        _sceneLoaded = false;
         
         // Return to the main menu
-        GetTree().ChangeSceneToFile("res://Scenes/UI/MainMenu.tscn");
+        GetTree().ChangeSceneToFile("res://scenes/UI/MainMenu.tscn");
     }
     
     private void OnPeerConnected(long id)
     {
         GD.Print($"Player connected: {id}");
         
-        // Server spawns player for new connections
-        if (_isServer)
+        // Server spawns player for new connections, but only if scene is loaded
+        if (_isServer && _sceneLoaded)
         {
             SpawnPlayer(id);
         }
@@ -118,11 +176,26 @@ public partial class NetworkManager : Node
         }
     }
     
+    private void SpawnAllPlayers()
+    {
+        GD.Print("Spawning all currently connected players");
+        
+        // Spawn all currently connected peers including the server (peer ID 1)
+        SpawnPlayer(1);
+        
+        foreach (long id in Multiplayer.GetPeers())
+        {
+            SpawnPlayer(id);
+        }
+    }
+    
     public void SpawnPlayer(long id)
     {
+        GD.Print($"Attempting to spawn player for peer: {id}");
+        
         if (PlayerScene == null)
         {
-            GD.PrintErr("Player scene not set in NetworkManager");
+            GD.PrintErr("PlayerScene is null in NetworkManager");
             return;
         }
         
@@ -133,25 +206,58 @@ public partial class NetworkManager : Node
             return;
         }
         
-        var player = PlayerScene.Instantiate();
+        // Instance the player scene
+        var player = PlayerScene.Instantiate<Node3D>();
         player.Name = id.ToString();
         
         // Set network authority
         player.SetMultiplayerAuthority((int)id);
         
-        // Find a spawn point
+        // Find spawn points
         var spawnPoints = GetTree().GetNodesInGroup("SpawnPoints");
+        if (spawnPoints.Count == 0)
+        {
+            // Try lowercase 'p' if uppercase 'P' doesn't work
+            spawnPoints = GetTree().GetNodesInGroup("Spawnpoints");
+        }
+        
+        GD.Print($"Found {spawnPoints.Count} spawn points");
+        
+        // First add the player to the scene
+        GetTree().CurrentScene.AddChild(player);
+        
+        // ONLY NOW (after adding to scene) set the position
         if (spawnPoints.Count > 0)
         {
             var spawnIndex = GD.Randi() % (uint)spawnPoints.Count;
-            (player as Node3D).GlobalPosition = (spawnPoints[(int)spawnIndex] as Node3D).GlobalPosition;
+            var spawnPoint = spawnPoints[(int)spawnIndex] as Node3D;
+            
+            if (spawnPoint != null)
+            {
+                // Now it's safe to get the global position
+                player.GlobalPosition = spawnPoint.GlobalPosition;
+                // Slightly raise the player to avoid clipping with floor
+                player.GlobalPosition += new Vector3(0, 1, 0); 
+                GD.Print($"Spawning player at position: {player.GlobalPosition}");
+            }
+            else
+            {
+                GD.PrintErr("Spawn point is not a Node3D!");
+                player.GlobalPosition = new Vector3(0, 2, 0);
+            }
+        }
+        else
+        {
+            GD.PrintErr("No spawn points found in either 'SpawnPoints' or 'Spawnpoints' group!");
+            // Default spawn position - a bit elevated to avoid falling through floor
+            player.GlobalPosition = new Vector3(0, 2, 0);
+            GD.Print("Using default spawn position");
         }
         
-        // Add to the scene
-        GetTree().CurrentScene.AddChild(player);
+        // Now add to our tracking dictionary
         _players[id] = player;
         
-        GD.Print($"Spawned player for peer: {id}");
+        GD.Print($"Spawned player for peer: {id} at position {player.GlobalPosition}");
     }
     
     public bool IsHost()

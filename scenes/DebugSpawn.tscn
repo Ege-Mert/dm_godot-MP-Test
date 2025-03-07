@@ -1,0 +1,17 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://Scripts/DebugSpawn.cs" id="1_y6dnx"]
+
+[sub_resource type="BoxMesh" id="BoxMesh_2vkjr"]
+size = Vector3(1, 0.1, 1)
+
+[node name="DebugSpawn" type="Node3D"]
+script = ExtResource("1_y6dnx")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
+mesh = SubResource("BoxMesh_2vkjr")
+
+[node name="Label3D" type="Label3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
+text = "Spawn Point"
+font_size = 24

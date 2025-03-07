@@ -4,7 +4,6 @@ using System.Collections.Generic;
 
 public partial class GameManager : Node
 {
-    [Export] public NodePath NetworkManagerPath { get; set; }
     [Export] public NodePath ScoreboardUIPath { get; set; }
     [Export] public int MatchDurationSeconds { get; set; } = 300; // 5 minutes
     
@@ -22,18 +21,22 @@ public partial class GameManager : Node
     
     public override void _Ready()
     {
-        _networkManager = GetNode<NetworkManager>(NetworkManagerPath);
+        // Get the NetworkManager from AutoLoad (global singleton)
+        _networkManager = GetNode<NetworkManager>("/root/NetworkManager");
         
         if (_networkManager == null)
         {
-            GD.PrintErr("NetworkManager not found at path: " + NetworkManagerPath);
+            GD.PrintErr("NetworkManager not found in AutoLoad. Make sure it's added as an AutoLoad in Project Settings.");
             return;
         }
         
         if (!ScoreboardUIPath.IsEmpty)
         {
             _scoreboardUI = GetNode<Control>(ScoreboardUIPath);
-            _timerLabel = _scoreboardUI.GetNode<Label>("%TimerLabel");
+            if (_scoreboardUI != null)
+            {
+                _timerLabel = _scoreboardUI.GetNode<Label>("%TimerLabel");
+            }
         }
         
         // Only the server starts the match
@@ -77,9 +80,6 @@ public partial class GameManager : Node
         
         GD.Print("Match started!");
         EmitSignal(SignalName.MatchStarted);
-        
-        // Spawn player for server
-        _networkManager.SpawnPlayer(1);
     }
     
     private void EndMatch()

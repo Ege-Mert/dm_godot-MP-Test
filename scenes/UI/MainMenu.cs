@@ -3,8 +3,6 @@ using System;
 
 public partial class MainMenu : Control
 {
-    [Export] public NodePath NetworkManagerPath { get; set; }
-    
     private Button _hostButton;
     private Button _joinButton;
     private Button _quitButton;
@@ -16,11 +14,12 @@ public partial class MainMenu : Control
         _joinButton = GetNode<Button>("%JoinButton");
         _quitButton = GetNode<Button>("%QuitButton");
         
-        _networkManager = GetNode<NetworkManager>(NetworkManagerPath);
+        // Get the NetworkManager from AutoLoad
+        _networkManager = GetNode<NetworkManager>("/root/NetworkManager");
         
         if (_networkManager == null)
         {
-            GD.PrintErr("NetworkManager not found at path: " + NetworkManagerPath);
+            GD.PrintErr("NetworkManager AutoLoad not found! Make sure to add it in Project Settings > AutoLoad");
             return;
         }
         

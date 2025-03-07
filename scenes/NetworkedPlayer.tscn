@@ -15,7 +15,7 @@ height = 1.8
 
 [sub_resource type="SceneReplicationConfig" id="SceneReplicationConfig_pl027"]
 
-[node name="ProtoController" type="CharacterBody3D" groups=["Players"]]
+[node name="NetworkedPlayer" type="CharacterBody3D" groups=["Players"]]
 script = ExtResource("1_u5yak")
 InputLeft = "move_left"
 InputRight = "move_right"
