@@ -22,7 +22,6 @@ InputRight = "move_right"
 InputForward = "move_up"
 InputBack = "move_down"
 InputJump = "jump"
-SynchronizerPath = NodePath("MultiplayerSynchronizer")
 
 [node name="Mesh" type="MeshInstance3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)

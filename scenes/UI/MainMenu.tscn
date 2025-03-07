@@ -1,6 +1,6 @@
 [gd_scene load_steps=2 format=3 uid="uid://deam5y1i5k41g"]
 
-[ext_resource type="Script" path="res://scenes/UI/MainMenu.cs" id="1_3h7gc"]
+[ext_resource type="Script" uid="uid://eq5kaqo0n1pk" path="res://scenes/UI/MainMenu.cs" id="1_11hie"]
 
 [node name="MainMenu" type="Control"]
 layout_mode = 3
@@ -9,7 +9,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-script = ExtResource("1_3h7gc")
+script = ExtResource("1_11hie")
 
 [node name="Panel" type="Panel" parent="."]
 layout_mode = 1
