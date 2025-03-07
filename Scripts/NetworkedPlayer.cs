@@ -74,8 +74,11 @@ public partial class NetworkedPlayer : CharacterBody3D
         _lookRotation.Y = Rotation.Y;
         _lookRotation.X = _head.Rotation.X;
         
-        // Only enable input processing for the local player
+        // Determine if this is the local player
         bool isLocal = IsMultiplayerAuthority();
+        GD.Print($"Player {PlayerId}: Is Local Player = {isLocal}");
+        
+        // Only enable input processing for the local player
         SetPhysicsProcess(isLocal);
         SetProcessInput(isLocal);
         
@@ -86,8 +89,14 @@ public partial class NetworkedPlayer : CharacterBody3D
             {
                 GD.Print($"Player {PlayerId}: Activating camera as local player");
                 _camera.Current = true;
+                // Force camera to be enabled to improve visibility
+                _camera.Visible = true;
+                _camera.ClearCurrent();
+                _camera.MakeCurrent();
+                
                 // Automatically capture mouse on start for the local player
-                CallDeferred(nameof(CaptureMouseCursor));
+                Input.MouseMode = Input.MouseModeEnum.Captured;
+                _mouseIsCaptured = true;
             }
             else
             {
@@ -115,19 +124,21 @@ public partial class NetworkedPlayer : CharacterBody3D
         if (!IsMultiplayerAuthority())
             return;
             
-        // Mouse capturing
-        if (Input.IsMouseButtonPressed(MouseButton.Left))
-        {
-            CaptureMouseCursor();
-        }
+        // Mouse capturing - always capture at start
         if (Input.IsKeyPressed(Key.Escape))
         {
             ReleaseMouseCursor();
         }
-
-        // Look around
-        if (_mouseIsCaptured && @event is InputEventMouseMotion mouseMotion)
+        else if (!_mouseIsCaptured)
         {
+            CaptureMouseCursor();
+        }
+
+        // Look around - this is critical for the game
+        if (@event is InputEventMouseMotion mouseMotion)
+        {
+            // Always rotate look even if mouse isn't explicitly captured
+            // This helps ensure mouse look works in all cases
             RotateLook(mouseMotion.Relative);
         }
 
@@ -148,6 +159,13 @@ public partial class NetworkedPlayer : CharacterBody3D
         if (Input.IsActionJustPressed(InputFire))
         {
             Fire();
+        }
+        
+        // Force re-capture if we detect input but mouse isn't captured
+        // This helps ensure the mouse is always captured during gameplay
+        if (!_mouseIsCaptured && !Input.IsKeyPressed(Key.Escape))
+        {
+            CaptureMouseCursor();
         }
     }
 
@@ -296,13 +314,25 @@ public partial class NetworkedPlayer : CharacterBody3D
 
     private void RotateLook(Vector2 rotInput)
     {
+        // Skip tiny movements that might be noise
+        if (rotInput.LengthSquared() < 0.01f)
+            return;
+            
         _lookRotation.X -= rotInput.Y * LookSpeed;
         _lookRotation.X = Mathf.Clamp(_lookRotation.X, Mathf.DegToRad(-85), Mathf.DegToRad(85));
         _lookRotation.Y -= rotInput.X * LookSpeed;
+        
+        // Make sure we reset the basis before applying rotation to avoid accumulation errors
         Transform = new Transform3D(Basis.Identity, Transform.Origin);
         RotateY(_lookRotation.Y);
         _head.Transform = new Transform3D(Basis.Identity, _head.Transform.Origin);
         _head.RotateX(_lookRotation.X);
+        
+        // Debug output to confirm rotation is happening
+        if (rotInput.Length() > 5.0f) // Only log significant movements to avoid spam
+        {
+            GD.Print($"Player {PlayerId}: Mouse rotation input: {rotInput}, Head rotation: {_head.Rotation}");
+        }
     }
 
     private void EnableFreefly()
@@ -320,8 +350,10 @@ public partial class NetworkedPlayer : CharacterBody3D
 
     private void CaptureMouseCursor()
     {
+        // Force mouse capture and print debug info
         Input.MouseMode = Input.MouseModeEnum.Captured;
         _mouseIsCaptured = true;
+        GD.Print($"Player {PlayerId}: Mouse cursor captured");
     }
 
     private void ReleaseMouseCursor()

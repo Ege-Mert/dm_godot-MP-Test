@@ -84,6 +84,18 @@ public partial class NetworkManager : Node
         
         // Load the game scene
         GetTree().ChangeSceneToFile(GameScenePath);
+        
+        // Make sure host player is spawned after scene changes
+        CallDeferred(nameof(SpawnHostPlayer));
+    }
+    
+    private void SpawnHostPlayer()
+    {
+        if (_isServer)
+        {
+            GD.Print("Spawning host player (ID 1)...");
+            SpawnPlayer(1);
+        }
     }
     
     public void JoinServer()
@@ -131,7 +143,8 @@ public partial class NetworkManager : Node
         if (_isServer)
         {
             GD.Print($"Server is spawning player for peer: {id}");
-            SpawnPlayer(id);
+            // Use CallDeferred to ensure the scene is fully loaded
+            CallDeferred(nameof(SpawnPlayer), id);
         }
         
         // Emit signal for other systems to react
