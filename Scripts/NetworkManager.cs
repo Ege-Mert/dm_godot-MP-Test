@@ -30,6 +30,8 @@ public partial class NetworkManager : Node
     
     public override void _Ready()
     {
+        GD.Print("NetworkManager: Starting with ID: " + Multiplayer.GetUniqueId());
+                
         Multiplayer.PeerConnected += OnPeerConnected;
         Multiplayer.PeerDisconnected += OnPeerDisconnected;
         
@@ -67,6 +69,8 @@ public partial class NetworkManager : Node
     public void StartServer()
     {
         _peer = new ENetMultiplayerPeer();
+        
+        // Set more comprehensive network configuration
         var error = _peer.CreateServer(ServerPort, 32);
         
         if (error != Error.Ok)
@@ -76,9 +80,11 @@ public partial class NetworkManager : Node
             return;
         }
         
+        GD.Print($"Network peer created with ID: {_peer.GetUniqueId()}");
+                
         Multiplayer.MultiplayerPeer = _peer;
         _isServer = true;
-        GD.Print($"Server started on port {ServerPort}");
+        GD.Print($"Server started on port {ServerPort}, my ID is {Multiplayer.GetUniqueId()}");
         
         EmitSignal(SignalName.ServerStarted);
         
@@ -110,8 +116,24 @@ public partial class NetworkManager : Node
     
     public void JoinServer()
     {
+        // Print diagnostics before connecting
+        GD.Print($"Attempting to join server at {ServerIP}:{ServerPort}");
+        
         _peer = new ENetMultiplayerPeer();
-        var error = _peer.CreateClient(ServerIP, ServerPort);
+        
+        // IPv4 validation and resolution
+        string targetIp = ServerIP;
+        
+        // Handle localhost/loopback cases
+        if (targetIp.ToLower() == "localhost" || targetIp == "127.0.0.1" || targetIp == "::1")
+        {
+            targetIp = "127.0.0.1";
+            GD.Print("Converting to standard loopback address: 127.0.0.1");
+        }
+        
+        // Create the client connection
+        GD.Print($"Creating client connection to {targetIp}:{ServerPort}");
+        var error = _peer.CreateClient(targetIp, ServerPort);
         
         if (error != Error.Ok)
         {
@@ -120,14 +142,42 @@ public partial class NetworkManager : Node
             return;
         }
         
+        // Register event handlers for client side BEFORE setting MultiplayerPeer
+        Multiplayer.ConnectedToServer += OnConnectedToServer;
+        Multiplayer.ConnectionFailed += OnConnectionFailed;
+        Multiplayer.ServerDisconnected += OnServerDisconnected;
+        
         Multiplayer.MultiplayerPeer = _peer;
         _isServer = false;
-        GD.Print($"Connected to server at {ServerIP}:{ServerPort}");
+        
+        // Get current connection state
+        var connectionStatus = _peer.GetConnectionStatus();
+        GD.Print($"Client connection initiated: Status={connectionStatus}, ID={Multiplayer.GetUniqueId()}");
         
         EmitSignal(SignalName.ClientConnected);
         
         // Load the game scene
         GetTree().ChangeSceneToFile(GameScenePath);
+    }
+    
+    private void OnConnectedToServer()
+    {
+        GD.Print("Client successfully connected to server");
+        GD.Print($"Connection status: {_peer.GetConnectionStatus()}, My ID: {Multiplayer.GetUniqueId()}");
+    }
+    
+    private void OnConnectionFailed()
+    {
+        GD.PrintErr("Client failed to connect to server");
+        GD.PrintErr($"Connection status: {_peer.GetConnectionStatus()}");
+        EmitSignal(SignalName.NetworkError, "Failed to connect to server");
+    }
+    
+    private void OnServerDisconnected()
+    {
+        GD.Print("Server disconnected");
+        // Return to main menu when server disconnects
+        Disconnect();
     }
     
     public void Disconnect()
@@ -155,6 +205,19 @@ public partial class NetworkManager : Node
             GD.Print($"Server is spawning player for peer: {id}");
             // Use CallDeferred to ensure the scene is fully loaded
             CallDeferred(nameof(SpawnPlayer), id);
+        }
+        else
+        {
+            // If we're a client and we see connection, report it
+            var myId = Multiplayer.GetUniqueId();
+            GD.Print($"Client (ID: {myId}) detected peer connection: {id}");
+            
+            // If this is us connecting, tell the server to spawn us
+            if (id == myId)
+            {
+                GD.Print($"This is OUR connection as client {myId}, telling server to spawn us");
+                // Could send an RPC here if needed to confirm client is ready
+            }
         }
         
         // Emit signal for other systems to react
@@ -233,9 +296,11 @@ public partial class NetworkManager : Node
                 return;
             }
             
+            // CRITICAL: The name must be a simple string number equal to the peer ID
             player.Name = id.ToString();
             
-            // Set network authority
+            // CRITICAL: Must set authority BEFORE adding to the scene tree
+            GD.Print($"Setting player {id} authority to {id}");
             player.SetMultiplayerAuthority((int)id);
             
             // First add to scene, then set position

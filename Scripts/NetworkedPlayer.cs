@@ -46,13 +46,28 @@ public partial class NetworkedPlayer : CharacterBody3D
     private Camera3D _camera;
     private MeshInstance3D _mesh;
     private MultiplayerSynchronizer _synchronizer;
+    private bool _isLocalPlayer = false;
+
+    public override void _EnterTree()
+    {
+        base._EnterTree();
+        
+        // Critical diagnostic message to track player authority
+        GD.Print($"Player {Name} entered tree - authority: {GetMultiplayerAuthority()}, local ID: {Multiplayer.GetUniqueId()}, is authority: {Multiplayer.GetUniqueId() == GetMultiplayerAuthority()}");
+    }
 
     public override void _Ready()
     {
+        // Diagnostics about authority
+        GD.Print($"Player {Name} ready, peer ID: {Multiplayer.GetUniqueId()}, Authority: {GetMultiplayerAuthority()}");
+        
         _head = GetNode<Node3D>("Head");
         _collider = GetNode<CollisionShape3D>("Collider");
         _camera = GetNode<Camera3D>("Head/Camera3D");
         _mesh = GetNode<MeshInstance3D>("Mesh");
+        
+        var localMarker = GetNode<MeshInstance3D>("LocalMarker");
+        var remoteMarker = GetNode<MeshInstance3D>("RemoteMarker");
         
         if (!SynchronizerPath.IsEmpty)
         {
@@ -74,47 +89,83 @@ public partial class NetworkedPlayer : CharacterBody3D
         _lookRotation.Y = Rotation.Y;
         _lookRotation.X = _head.Rotation.X;
         
-        // Determine if this is the local player
-        bool isLocal = IsMultiplayerAuthority();
-        GD.Print($"Player {PlayerId}: Is Local Player = {isLocal}");
+        // CRITICAL FIX: Detect name/ID assignment disparity for multiplayer authority
+        // The player's name is its ID assigned by the server
+        long nameID = 0;
+        if (long.TryParse(Name, out nameID))
+        {
+            // SPECIAL CASE HANDLING: 
+            // If this player's name matches our peer ID, take control
+            // OR if our peer ID is 1 (client) and this player's authority matches its name, take control
+            bool isLocal = nameID == Multiplayer.GetUniqueId() || 
+                          (Multiplayer.GetUniqueId() == 1 && nameID == GetMultiplayerAuthority());
+            
+            _isLocalPlayer = isLocal;
+            
+            GD.Print($"Player {PlayerId}: Special authority check: Name={nameID}, Peer={Multiplayer.GetUniqueId()}, Auth={GetMultiplayerAuthority()}");
+            GD.Print($"Player {PlayerId}: Is Local Player = {isLocal}");
         
-        // Only enable input processing for the local player
-        SetPhysicsProcess(isLocal);
-        SetProcessInput(isLocal);
-        SetProcessUnhandledInput(isLocal);
-        
-        // Setup camera and auto-capture mouse for local player
-        if (_camera != null)
-        {            
+            // Set visual indicators for local vs remote
+            if (localMarker != null)
+                localMarker.Visible = isLocal;
+            if (remoteMarker != null)
+                remoteMarker.Visible = !isLocal;
+            
+            // Only enable input processing for the local player
+            SetPhysicsProcess(isLocal);
+            SetProcessInput(isLocal);
+            SetProcessUnhandledInput(isLocal);
+            
+            // Update the network status display
+            var mainScene = GetTree().CurrentScene;
+            if (mainScene != null && isLocal)
+            {
+                var networkStatus = mainScene.GetNode<Label>("CanvasLayer/GameHUD/NetworkStatus");
+                if (networkStatus != null)
+                {
+                    networkStatus.Text = $"Network ID: {Multiplayer.GetUniqueId()} (Node={Name})"; 
+                }
+            }
+            
+            // Setup camera and auto-capture mouse for local player
+            if (_camera != null)
+            {            
+                if (isLocal)
+                {
+                    GD.Print($"Player {PlayerId}: Activating camera as local player");
+                    
+                    // Force make current with delay to ensure it becomes the active camera
+                    CallDeferred(nameof(SetupLocalCamera));
+                    
+                    // Automatically capture mouse on start for the local player
+                    Input.MouseMode = Input.MouseModeEnum.Captured;
+                    _mouseIsCaptured = true;
+                    GD.Print($"Mouse captured during initialization");
+                }
+                else
+                {
+                    _camera.Current = false;
+                }
+            }
+            
+            // Set a different color for remote players
+            if (!isLocal && _mesh != null)
+            {
+                var material = new StandardMaterial3D();
+                material.AlbedoColor = new Color(1.0f, 0.0f, 0.0f); // Red for remote players
+                material.EmissionEnabled = true;
+                material.Emission = new Color(0.3f, 0.0f, 0.0f); // Slight glow
+                _mesh.MaterialOverride = material;
+            }
+            
             if (isLocal)
             {
-                GD.Print($"Player {PlayerId}: Activating camera as local player");
-                
-                // Force make current with delay to ensure it becomes the active camera
-                CallDeferred(nameof(SetupLocalCamera));
-                
-                // Automatically capture mouse on start for the local player
-                Input.MouseMode = Input.MouseModeEnum.Captured;
-                _mouseIsCaptured = true;
-                GD.Print($"Mouse captured during initialization");
-            }
-            else
-            {
-                _camera.Current = false;
+                CallDeferred(nameof(ConnectToHUD));
             }
         }
-        
-        // Set a different color for remote players
-        if (!isLocal && _mesh != null)
+        else
         {
-            var material = new StandardMaterial3D();
-            material.AlbedoColor = new Color(1.0f, 0.0f, 0.0f); // Red for remote players
-            _mesh.MaterialOverride = material;
-        }
-        
-        if (isLocal)
-        {
-            CallDeferred(nameof(ConnectToHUD));
+            GD.PrintErr($"Player name {Name} is not a valid ID number!");
         }
     }
     
@@ -126,16 +177,22 @@ public partial class NetworkedPlayer : CharacterBody3D
             _camera.Current = true;
             _camera.ClearCurrent();
             _camera.MakeCurrent();
-            _camera.Visible = true;
+            
+            // Make sure visibility mask includes everything
+            _camera.CullMask = 0x7FFFFFFF;  // All bits set except the highest one
+            _camera.Far = 1000.0f;  // Ensure far clipping plane is distant
+            
             GD.Print("Camera setup complete");
         }
     }
 
     public override void _Input(InputEvent @event)
     {
-        // Only process input if we're the owner of this player
-        if (!IsMultiplayerAuthority())
+        // CRITICAL: Only process input if this player is local
+        if (!_isLocalPlayer)
+        {
             return;
+        }
             
         // Input handling in _Input gets priority over _UnhandledInput
         if (@event is InputEventMouseMotion mouseMotion)
@@ -151,9 +208,11 @@ public partial class NetworkedPlayer : CharacterBody3D
     
     public override void _UnhandledInput(InputEvent @event)
     {
-        // Only process input if we're the owner of this player
-        if (!IsMultiplayerAuthority())
+        // CRITICAL: Only process input if this player is local
+        if (!_isLocalPlayer)
+        {
             return;
+        }
             
         // Mouse capturing - always capture at start
         if (Input.IsKeyPressed(Key.Escape))
@@ -195,9 +254,11 @@ public partial class NetworkedPlayer : CharacterBody3D
 
     public override void _PhysicsProcess(double delta)
     {
-        // Only process physics if we're the owner of this player
-        if (!IsMultiplayerAuthority())
+        // CRITICAL: Only process physics if this player is local
+        if (!_isLocalPlayer)
+        {
             return;
+        }
             
         // If freeflying, handle freefly and nothing else
         if (CanFreefly && _isFreeflyEnabled)
@@ -263,7 +324,8 @@ public partial class NetworkedPlayer : CharacterBody3D
     [Rpc(MultiplayerApi.RpcMode.Authority)]
     public void TakeDamage(int amount, int attackerId)
     {
-        if (!IsMultiplayerAuthority())
+        // Check authority with direct comparison to ensure it works
+        if (!_isLocalPlayer)
             return;
             
         Health -= amount;
@@ -343,7 +405,7 @@ public partial class NetworkedPlayer : CharacterBody3D
             return;
             
         // Double check we have multiplayer authority before processing mouse input
-        if (!IsMultiplayerAuthority())
+        if (!_isLocalPlayer)
             return;
             
         // Print every mouse input for debugging

@@ -1,9 +1,11 @@
-[gd_scene load_steps=6 format=3 uid="uid://daopl8o162yob"]
+[gd_scene load_steps=9 format=3 uid="uid://daopl8o162yob"]
 
 [ext_resource type="Script" uid="uid://dfxmg1ft4fdcl" path="res://Scripts/NetworkedPlayer.cs" id="1_u5yak"]
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_iof21"]
 albedo_color = Color(0.91806, 0.575202, 0.222449, 1)
+emission_enabled = true
+emission = Color(0.192157, 0.192157, 0.192157, 1)
 
 [sub_resource type="CapsuleMesh" id="CapsuleMesh_ucva2"]
 radius = 0.4
@@ -12,6 +14,19 @@ height = 1.8
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_iof21"]
 radius = 0.4
 height = 1.8
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_remote"]
+albedo_color = Color(1, 0, 0, 1)
+emission_enabled = true
+emission = Color(0.419608, 0, 0, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_id"]
+size = Vector3(0.2, 0.2, 0.2)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_local"]
+albedo_color = Color(0, 1, 0, 1)
+emission_enabled = true
+emission = Color(0, 0.419608, 0, 1)
 
 [sub_resource type="SceneReplicationConfig" id="SceneReplicationConfig_pl027"]
 properties/0/path = NodePath(".:position")
@@ -39,7 +54,7 @@ properties/7/path = NodePath(".:velocity")
 properties/7/spawn = true
 properties/7/replication_mode = 1
 
-[node name="ProtoController" type="CharacterBody3D" groups=["Players"]]
+[node name="NetworkedPlayer" type="CharacterBody3D" groups=["Players"]]
 collision_layer = 3
 collision_mask = 3
 script = ExtResource("1_u5yak")
@@ -49,7 +64,6 @@ SynchronizerPath = NodePath("MultiplayerSynchronizer")
 [node name="Mesh" type="MeshInstance3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
 material_override = SubResource("StandardMaterial3D_iof21")
-cast_shadow = 0
 mesh = SubResource("CapsuleMesh_ucva2")
 
 [node name="Collider" type="CollisionShape3D" parent="."]
@@ -61,6 +75,22 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.7, 0)
 
 [node name="Camera3D" type="Camera3D" parent="Head"]
 
+[node name="RemoteMarker" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.2, 0)
+material_override = SubResource("StandardMaterial3D_remote")
+mesh = SubResource("BoxMesh_id")
+
+[node name="LocalMarker" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.5, 0)
+material_override = SubResource("StandardMaterial3D_local")
+mesh = SubResource("BoxMesh_id")
+
+[node name="OmniLight3D" type="OmniLight3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.7, 0)
+light_color = Color(0.905882, 0.878431, 0.760784, 1)
+light_energy = 0.5
+omni_range = 3.0
+
 [node name="MultiplayerSynchronizer" type="MultiplayerSynchronizer" parent="."]
-replication_interval = 0.03
+replication_interval = 0.05
 replication_config = SubResource("SceneReplicationConfig_pl027")

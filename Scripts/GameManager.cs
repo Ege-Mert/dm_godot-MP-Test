@@ -22,6 +22,9 @@ public partial class GameManager : Node
     
     public override void _Ready()
     {
+        GD.Print("GameManager: _Ready called");
+        GD.Print($"Current scene: {GetTree().CurrentScene?.Name}, My ID: {Multiplayer.GetUniqueId()}");
+        
         if (NetworkManagerPath.IsEmpty)
         {
             // Try to find the autoloaded NetworkManager
@@ -38,19 +41,23 @@ public partial class GameManager : Node
             return;
         }
         
-        GD.Print("GameManager successfully connected to NetworkManager");
+        // Always verify NetworkManager is initialized correctly
+        GD.Print($"GameManager successfully connected to NetworkManager. IsHost: {_networkManager.IsHost()}");
         
         if (!ScoreboardUIPath.IsEmpty)
         {
             _scoreboardUI = GetNode<Control>(ScoreboardUIPath);
-            _timerLabel = _scoreboardUI.GetNode<Label>("%TimerLabel");
-            _scoreboardUI.Visible = false;
-            
-            // Set up the scoreboard title
-            var titleLabel = _scoreboardUI.GetNode<Label>("%Title");
-            if (titleLabel != null)
+            if (_scoreboardUI != null)
             {
-                titleLabel.Text = "SCOREBOARD";
+                _timerLabel = _scoreboardUI.GetNode<Label>("%TimerLabel");
+                _scoreboardUI.Visible = false;
+                
+                // Set up the scoreboard title
+                var titleLabel = _scoreboardUI.GetNode<Label>("%Title");
+                if (titleLabel != null)
+                {
+                    titleLabel.Text = "SCOREBOARD";
+                }
             }
         }
         
@@ -63,6 +70,13 @@ public partial class GameManager : Node
         {
             // Use CallDeferred to ensure the scene is fully loaded
             CallDeferred(nameof(StartMatch));
+        }
+        
+        // Update debug info with network ID
+        var networkStatus = GetNode<Label>("../CanvasLayer/GameHUD/NetworkStatus");
+        if (networkStatus != null)
+        {
+            networkStatus.Text = $"Network ID: {Multiplayer.GetUniqueId()}"; 
         }
     }
     
@@ -95,6 +109,34 @@ public partial class GameManager : Node
         {
             _scoreboardUI.Visible = false;
         }
+        
+        // Add a debug toggle display that can show current player positions for testing
+        if (Input.IsKeyPressed(Key.F1))
+        {
+            DebugShowPlayerPositions();
+        }
+    }
+    
+    private void DebugShowPlayerPositions()
+    {
+        // Find debug info label
+        var debugLabel = GetNode<Label>("../CanvasLayer/DebugInfo/Label");
+        if (debugLabel == null) return;
+        
+        // Get all players and show their positions
+        var players = _networkManager.GetPlayers();
+        string info = $"My ID: {Multiplayer.GetUniqueId()}\n";
+        info += $"Total players: {players.Count}\n";
+        
+        foreach (var player in players)
+        {
+            if (player.Value is Node3D node3D)
+            {
+                info += $"Player {player.Key}: {node3D.Position}\n";
+            }
+        }
+        
+        debugLabel.Text = info;
     }
     
     private void StartMatch()
@@ -224,11 +266,18 @@ public partial class GameManager : Node
     private void OnPlayerConnected(long id)
     {
         GD.Print($"GameManager: Player {id} connected");
+        GD.Print($"Current peers: {string.Join(", ", Multiplayer.GetPeers())}");
         
         // If match is active, sync the match state with the new player
         if (_matchActive && _networkManager.IsHost())
         {
             RpcId((int)id, nameof(UpdateMatchTimer), _matchTimeRemaining);
+        }
+        
+        // Update scoreboard for everyone
+        if (_networkManager.IsHost())
+        {
+            CallDeferred(nameof(UpdateScoreboard));
         }
     }
     

@@ -1,6 +1,7 @@
-[gd_scene load_steps=5 format=3 uid="uid://dp87rlfusoboi"]
+[gd_scene load_steps=10 format=3 uid="uid://dp87rlfusoboi"]
 
 [ext_resource type="Script" uid="uid://bhieniwj2ml5i" path="res://Scripts/GameManager.cs" id="3_7s5hy"]
+[ext_resource type="Script" uid="uid://cumsr0u63vwlo" path="res://Scripts/NetworkDiagnostics.cs" id="4_net_diag"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_xs4ih"]
 sky_horizon_color = Color(0.662243, 0.671743, 0.686743, 1)
@@ -14,6 +15,26 @@ background_mode = 2
 sky = SubResource("Sky_6ytau")
 tonemap_mode = 2
 glow_enabled = true
+fog_enabled = true
+fog_light_color = Color(0.85098, 0.909804, 0.972549, 1)
+volumetric_fog_enabled = true
+volumetric_fog_density = 0.01
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_floor"]
+albedo_color = Color(0.27451, 0.309804, 0.380392, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_landmark"]
+size = Vector3(4, 10, 4)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_landmark"]
+albedo_color = Color(0.847059, 0.0627451, 0.0823529, 1)
+emission_enabled = true
+emission = Color(0.521569, 0, 0, 1)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_landmark2"]
+albedo_color = Color(0.0745098, 0.690196, 0.988235, 1)
+emission_enabled = true
+emission = Color(0, 0.380392, 0.517647, 1)
 
 [node name="GameScene" type="Node3D"]
 
@@ -26,26 +47,57 @@ shadow_enabled = true
 environment = SubResource("Environment_vijgj")
 
 [node name="Floor" type="CSGBox3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5.93466, -0.391357, -2.59286)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)
 use_collision = true
-size = Vector3(50, 1, 50)
+size = Vector3(100, 1, 100)
+material = SubResource("StandardMaterial3D_floor")
 
 [node name="SpawnPoint1" type="Marker3D" parent="." groups=["SpawnPoints"]]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -20.9175, 0.78603, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -20, 1, 0)
+
+[node name="OmniLight3D" type="OmniLight3D" parent="SpawnPoint1"]
+light_color = Color(0.87451, 0.701961, 0.321569, 1)
+light_energy = 3.0
 
 [node name="SpawnPoint2" type="Marker3D" parent="." groups=["SpawnPoints"]]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 11.3694, 0.78603, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 20, 1, 0)
+
+[node name="OmniLight3D" type="OmniLight3D" parent="SpawnPoint2"]
+light_color = Color(0.87451, 0.701961, 0.321569, 1)
+light_energy = 3.0
 
 [node name="SpawnPoint3" type="Marker3D" parent="." groups=["SpawnPoints"]]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.78603, -10)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, -20)
+
+[node name="OmniLight3D" type="OmniLight3D" parent="SpawnPoint3"]
+light_color = Color(0.87451, 0.701961, 0.321569, 1)
+light_energy = 3.0
 
 [node name="SpawnPoint4" type="Marker3D" parent="." groups=["SpawnPoints"]]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.78603, 10)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 20)
+
+[node name="OmniLight3D" type="OmniLight3D" parent="SpawnPoint4"]
+light_color = Color(0.87451, 0.701961, 0.321569, 1)
+light_energy = 3.0
+
+[node name="Landmark1" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -30, 5, -30)
+mesh = SubResource("BoxMesh_landmark")
+surface_material_override/0 = SubResource("StandardMaterial3D_landmark")
+
+[node name="Landmark2" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 30, 5, 30)
+mesh = SubResource("BoxMesh_landmark")
+surface_material_override/0 = SubResource("StandardMaterial3D_landmark2")
 
 [node name="GameManager" type="Node" parent="."]
 script = ExtResource("3_7s5hy")
 NetworkManagerPath = NodePath("/root/NetworkManager")
 ScoreboardUIPath = NodePath("../CanvasLayer/Scoreboard")
+
+[node name="NetworkDiagnostics" type="Node" parent="."]
+script = ExtResource("4_net_diag")
+UpdateIntervalSeconds = 0.5
 
 [node name="CanvasLayer" type="CanvasLayer" parent="."]
 
@@ -57,18 +109,22 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
+[node name="ColorRect" type="ColorRect" parent="CanvasLayer/GameHUD"]
+layout_mode = 0
+offset_right = 300.0
+offset_bottom = 120.0
+color = Color(0.196078, 0.196078, 0.196078, 0.392157)
+
 [node name="VBoxContainer" type="VBoxContainer" parent="CanvasLayer/GameHUD"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
+layout_mode = 0
+offset_right = 300.0
+offset_bottom = 120.0
 
 [node name="HealthBar" type="ProgressBar" parent="CanvasLayer/GameHUD/VBoxContainer"]
 unique_name_in_owner = true
 layout_mode = 2
 value = 100.0
+show_percentage = false
 
 [node name="HealthLabel" type="Label" parent="CanvasLayer/GameHUD/VBoxContainer"]
 unique_name_in_owner = true
@@ -84,6 +140,36 @@ text = "Ammo: Unlimited"
 unique_name_in_owner = true
 layout_mode = 2
 text = "Kills: 0 | Deaths: 0"
+
+[node name="GameStatus" type="Label" parent="CanvasLayer/GameHUD"]
+layout_mode = 1
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -250.0
+offset_right = 250.0
+offset_bottom = 40.0
+grow_horizontal = 2
+theme_override_colors/font_color = Color(0.827451, 0.827451, 0.827451, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 5
+theme_override_font_sizes/font_size = 24
+text = "DEATHMATCH MODE"
+horizontal_alignment = 1
+
+[node name="NetworkStatus" type="Label" parent="CanvasLayer/GameHUD"]
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -200.0
+offset_bottom = 26.0
+grow_horizontal = 0
+theme_override_colors/font_color = Color(0.878431, 0.878431, 0.878431, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 3
+text = "Network ID: ???"
+horizontal_alignment = 2
 
 [node name="Scoreboard" type="Control" parent="CanvasLayer"]
 visible = false
@@ -148,5 +234,35 @@ offset_bottom = -20.0
 grow_horizontal = 2
 grow_vertical = 2
 
+[node name="DebugInfo" type="Control" parent="CanvasLayer"]
+layout_mode = 3
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -100.0
+grow_horizontal = 2
+grow_vertical = 0
+
+[node name="ColorRect" type="ColorRect" parent="CanvasLayer/DebugInfo"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0, 0, 0, 0.196078)
+
+[node name="Label" type="Label" parent="CanvasLayer/DebugInfo"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+text = "Debug Info: If you can read this, rendering is working. Move with WASD, look with mouse, shoot with LMB."
+horizontal_alignment = 1
+autowrap_mode = 3
+
 [node name="VisibilityNotifier" type="VisibleOnScreenNotifier3D" parent="."]
-aabb = AABB(-25, -1, -25, 50, 10, 50)
+aabb = AABB(-50, -1, -50, 100, 10, 100)
